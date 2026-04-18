@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import httpx
-from openai import APIConnectionError, APIStatusError, OpenAI, RateLimitError
+from openai import APIConnectionError, APIError, APIStatusError, OpenAI, RateLimitError
 from tenacity import (
     retry,
     retry_if_exception_type,
@@ -117,6 +117,11 @@ class GatewayClient:
             raise GatewayError(
                 f"Respan Gateway returned {exc.status_code}: {exc.message}"
             ) from exc
+        except APIError as exc:
+            # APIConnectionError, RateLimitError, and friends after retries.
+            raise GatewayError(f"Respan Gateway request failed: {exc}") from exc
+        except httpx.TimeoutException as exc:
+            raise GatewayError(f"Respan Gateway timed out: {exc}") from exc
 
     def _send_once(
         self,
