@@ -29,7 +29,7 @@ from arena.evals.evaluators import Evaluator, EvaluatorResult
 from arena.gateway.cache import SemanticCache
 from arena.gateway.client import GatewayClient, GatewayError, GatewayResponse
 from arena.gateway.pricing import cost_usd
-from arena.store import CaseResult, JudgeScore, Run, Variant, session
+from arena.store import Case, CaseResult, JudgeScore, Run, Variant, session
 from arena.tracing import span
 
 log = logging.getLogger(__name__)
@@ -104,6 +104,25 @@ class VariantRunner:
                 s.add(cfg.variant)
                 s.commit()
                 s.refresh(cfg.variant)
+            # Upsert cases so post-hoc judging can reconstruct inputs/expected
+            # without needing the original dataset file.
+            import json as _json
+
+            for case in cases:
+                if s.get(Case, case.id) is None:
+                    s.add(
+                        Case(
+                            id=case.id,
+                            dataset=dataset.name,
+                            inputs_json=_json.dumps(case.inputs, default=str),
+                            expected_json=_json.dumps(case.expected, default=str)
+                            if case.expected is not None
+                            else None,
+                            tags_json=_json.dumps(case.tags),
+                            source=case.source,
+                            trace_id=case.trace_id,
+                        )
+                    )
             run = Run(
                 variant_id=cfg.variant.id,
                 dataset=dataset.name,

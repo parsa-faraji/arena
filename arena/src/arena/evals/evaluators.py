@@ -3,8 +3,8 @@
 We deliberately keep the interface tiny: each evaluator is a callable that
 takes `(case, output)` and returns an `EvaluatorResult`. That lets us mix
 handwritten evaluators, regex checks, and LLM-as-judge evaluators through
-the same pipeline. Judge evaluators live in `arena.judges` and plug in
-here through the `JudgeEvaluator` wrapper (added in Week-1 Day 5).
+the same pipeline. Judge evaluators plug in here through the
+`JudgeEvaluator` wrapper below, which delegates to `arena.judges`.
 
 Every evaluator has a `name` so the DB / dashboard can attribute scores.
 Scores are floats in [0, 1]; `passed` is a convenience boolean derived
@@ -15,9 +15,13 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from arena.evals.dataset import EvalCase
+
+if TYPE_CHECKING:
+    from arena.gateway.client import GatewayClient
+    from arena.judges.base import Judge
 
 
 @dataclass(slots=True)
@@ -155,4 +159,37 @@ class RegexEvaluator:
             score=1.0 if passed else 0.0,
             passed=passed,
             details={"matched": match.group(0) if match else None},
+        )
+
+
+class JudgeEvaluator:
+    """Adapts an LLM-as-judge to the `Evaluator` surface.
+
+    The judge does the LLM call; this class wraps its verdict in the
+    `EvaluatorResult` shape the runner persists. Kept class-based rather
+    than a dataclass so the name can be synthesised at construction time.
+    """
+
+    def __init__(
+        self,
+        judge: Judge,
+        client: GatewayClient,
+        *,
+        name: str | None = None,
+        pass_threshold: float = 0.5,
+    ) -> None:
+        self._judge = judge
+        self._client = client
+        self.name = name or judge.name
+        self._pass_threshold = pass_threshold
+
+    def score(self, case: EvalCase, output: str) -> EvaluatorResult:
+        verdict = self._judge.judge(case, output, client=self._client)
+        details: dict[str, Any] = {"rationale": verdict.rationale}
+        details.update(verdict.raw)
+        return EvaluatorResult(
+            name=self.name,
+            score=verdict.score,
+            passed=verdict.score >= self._pass_threshold,
+            details=details,
         )

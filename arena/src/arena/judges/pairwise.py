@@ -19,7 +19,6 @@ from arena.evals.evaluators import parse_json_output
 from arena.gateway.client import GatewayClient
 from arena.judges.base import JUDGE_SYSTEM_PROMPT
 
-
 Verdict = Literal["a", "b", "tie"]
 
 

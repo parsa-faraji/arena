@@ -8,17 +8,22 @@ that bites you right before a demo.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import TYPE_CHECKING, Annotated, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from arena.evals.evaluators import (
     Evaluator,
     ExactMatchEvaluator,
     JSONParseEvaluator,
+    JudgeEvaluator,
     RegexEvaluator,
 )
+
+if TYPE_CHECKING:
+    from arena.gateway.client import GatewayClient
+    from arena.judges.base import Judge
 
 
 class _Base(BaseModel):
@@ -46,9 +51,54 @@ class RegexSpec(_Base):
 
 class JudgeSpec(_Base):
     type: Literal["judge"]
-    judge: str  # e.g. "pairwise", "rubric:helpfulness"
-    field: str | None = None  # sub-field of output to judge (for rubric)
+    judge: Literal["rubric", "reference", "ensemble"] = "rubric"
     name: str | None = None
+    model: str | None = None
+    temperature: float = 0.0
+    # rubric-specific
+    criterion: str | None = None
+    target_field: str | None = None
+    # reference-specific
+    reference_field: str = "reference"
+    # ensemble-specific: nested rubric/reference judges
+    judges: list[JudgeSpec] | None = None
+
+    @model_validator(mode="after")
+    def _validate_kind(self) -> JudgeSpec:
+        if self.judge == "rubric" and not self.criterion:
+            raise ValueError("rubric judge requires 'criterion'")
+        if self.judge == "ensemble" and not self.judges:
+            raise ValueError("ensemble judge requires 'judges' (nested list)")
+        if self.judge != "ensemble" and self.judges:
+            raise ValueError("'judges' is only valid for judge: ensemble")
+        return self
+
+    def build_judge(self, default_model: str) -> Judge:
+        """Instantiate the concrete Judge implementation."""
+        from arena.judges.ensemble import JudgeEnsemble
+        from arena.judges.reference import ReferenceJudge
+        from arena.judges.rubric import RubricJudge
+
+        model = self.model or default_model
+        if self.judge == "rubric":
+            return RubricJudge(
+                criterion=self.criterion or "",
+                name=self.name or "",
+                model=model,
+                temperature=self.temperature,
+                target_field=self.target_field,
+            )
+        if self.judge == "reference":
+            return ReferenceJudge(
+                reference_field=self.reference_field,
+                name=self.name or "reference",
+                model=model,
+                temperature=self.temperature,
+            )
+        if self.judge == "ensemble":
+            nested = [spec.build_judge(default_model) for spec in (self.judges or [])]
+            return JudgeEnsemble(judges=nested, name=self.name or "ensemble")
+        raise ValueError(f"unknown judge kind: {self.judge}")
 
 
 EvaluatorSpec = Annotated[
@@ -86,8 +136,17 @@ class ProjectConfig(_Base):
         except ValidationError as exc:
             raise ProjectConfigError(f"{p}: {_format_validation_error(exc)}") from exc
 
-    def to_evaluators(self) -> list[Evaluator]:
-        """Instantiate the evaluator list. Judge evaluators are wired in Day 5."""
+    def to_evaluators(
+        self,
+        *,
+        client: GatewayClient | None = None,
+    ) -> list[Evaluator]:
+        """Instantiate the evaluator list.
+
+        If `client` is provided, judge evaluators are wired up. Otherwise
+        they're skipped — useful for dry-running the config without a
+        Respan API key (tests, docs, etc.).
+        """
         out: list[Evaluator] = []
         for spec in self.evaluators:
             if isinstance(spec, ExactMatchSpec):
@@ -108,10 +167,10 @@ class ProjectConfig(_Base):
                     )
                 )
             elif isinstance(spec, JudgeSpec):
-                # Wired in Week-1 Day 5 once arena.judges lands. Until then
-                # we carry the spec forward without instantiating so the
-                # config parses cleanly.
-                continue
+                if client is None:
+                    continue
+                judge = spec.build_judge(default_model=self.judge_model)
+                out.append(JudgeEvaluator(judge, client, name=spec.name or None))
         return out
 
 

@@ -8,8 +8,6 @@ that hands back the wrong answer is worse than no cache.
 """
 from __future__ import annotations
 
-from typing import Any
-
 import numpy as np
 
 from arena.gateway.cache import SemanticCache

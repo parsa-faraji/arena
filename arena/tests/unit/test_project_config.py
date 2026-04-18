@@ -73,14 +73,62 @@ def test_non_mapping_root_rejected(tmp_path: Path) -> None:
         ProjectConfig.from_yaml(_write(tmp_path / "a.yaml", "- just\n- a\n- list\n"))
 
 
-def test_judge_spec_preserved_but_not_instantiated(tmp_path: Path) -> None:
-    # Judge evaluator lands in Day 5; config must parse now so projects
-    # can commit their final config up front.
+def test_judge_spec_needs_client_to_instantiate(tmp_path: Path) -> None:
     cfg = ProjectConfig.from_yaml(
         _write(
             tmp_path / "a.yaml",
-            "evaluators:\n  - type: judge\n    judge: pairwise\n",
+            "evaluators:\n"
+            "  - type: judge\n"
+            "    judge: rubric\n"
+            "    criterion: 'is it helpful?'\n"
+            "    name: helpfulness\n",
         )
     )
     assert len(cfg.evaluators) == 1
-    assert cfg.to_evaluators() == []  # judges not instantiated yet
+    # Without a client, judges are skipped — this keeps `arena run` without
+    # credentials from crashing and lets the dashboard load configs read-only.
+    assert cfg.to_evaluators() == []
+
+
+def test_rubric_judge_requires_criterion(tmp_path: Path) -> None:
+    with pytest.raises(ProjectConfigError, match="criterion"):
+        ProjectConfig.from_yaml(
+            _write(
+                tmp_path / "a.yaml",
+                "evaluators:\n  - type: judge\n    judge: rubric\n",
+            )
+        )
+
+
+def test_ensemble_judge_requires_nested_judges(tmp_path: Path) -> None:
+    with pytest.raises(ProjectConfigError, match="nested"):
+        ProjectConfig.from_yaml(
+            _write(
+                tmp_path / "a.yaml",
+                "evaluators:\n  - type: judge\n    judge: ensemble\n",
+            )
+        )
+
+
+def test_judge_evaluator_built_when_client_supplied(tmp_path: Path) -> None:
+    from arena.evals.evaluators import JudgeEvaluator
+
+    cfg = ProjectConfig.from_yaml(
+        _write(
+            tmp_path / "a.yaml",
+            "evaluators:\n"
+            "  - type: judge\n"
+            "    judge: rubric\n"
+            "    criterion: 'reply quality'\n"
+            "    target_field: suggested_reply\n"
+            "    name: helpfulness\n",
+        )
+    )
+
+    class _StubClient:
+        pass
+
+    evals = cfg.to_evaluators(client=_StubClient())  # type: ignore[arg-type]
+    assert len(evals) == 1
+    assert isinstance(evals[0], JudgeEvaluator)
+    assert evals[0].name == "helpfulness"

@@ -17,7 +17,7 @@ class _SpanRecorder:
     def __init__(self) -> None:
         self.calls: list[tuple[str, dict[str, Any]]] = []
 
-    def __call__(self, *, name: str, **attrs: Any) -> "_SpanCtx":
+    def __call__(self, *, name: str, **attrs: Any) -> _SpanCtx:
         self.calls.append((name, attrs))
         return _SpanCtx()
 

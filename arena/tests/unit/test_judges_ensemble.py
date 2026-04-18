@@ -15,7 +15,7 @@ class _FakeJudge:
     score: float
     rationale: str = ""
 
-    def judge(self, case, output, *, client):  # noqa: ANN001
+    def judge(self, case, output, *, client):
         return JudgeVerdict(score=self.score, rationale=self.rationale)
 
 

@@ -183,7 +183,7 @@ def run(
 
     project_cfg = _load_project_config()
     ds = Dataset.from_jsonl(dataset)
-    evaluators = project_cfg.to_evaluators()
+    evaluators = project_cfg.to_evaluators(client=client)
     if not evaluators:
         console.print(
             "[yellow]warning[/yellow] no evaluators configured in arena.config.yaml; "
@@ -380,9 +380,176 @@ def _colour_status(status: str) -> str:
 
 
 @app.command()
-def judge(run_id: str = typer.Argument(...)) -> None:
-    """Score a run with the configured judge ensemble. (Week-1 stub.)"""
-    console.print(f"[yellow]TODO[/yellow] judge run {run_id} - Week 1 Day 5.")
+def judge(
+    run_id: str = typer.Argument(None, help="Run id to judge (full or 8-char prefix)."),
+    pairwise: bool = typer.Option(
+        False, "--pairwise", help="Compare two runs instead of scoring one."
+    ),
+    run_b: str = typer.Option(
+        None, "--vs", help="Second run id when --pairwise is set.", show_default=False
+    ),
+    criterion: str = typer.Option(
+        "Which output is more helpful to the customer?",
+        "--criterion",
+        help="Pairwise criterion.",
+    ),
+) -> None:
+    """Score a run's stored outputs with the configured judges.
+
+    Two modes:
+      arena judge <run-id>                  — apply config judges post-hoc.
+      arena judge <run-a> --pairwise --vs <run-b>  — pairwise win rate.
+    """
+    from sqlmodel import select
+
+    from arena.store import Case
+
+    if run_id is None:
+        console.print("[red]run-id is required[/red]")
+        raise typer.Exit(code=2)
+
+    settings = _settings()
+    _require_respan(settings)
+    init_tracing(api_key=settings.respan_api_key_value(), app_name="arena")
+
+    client = GatewayClient(
+        api_key=settings.respan_api_key_value(),
+        base_url=settings.respan_base_url,
+        default_model=settings.default_model,
+        disable_log=settings.disable_log,
+    )
+    engine = _engine(settings)
+
+    if pairwise:
+        if run_b is None:
+            console.print("[red]--pairwise requires --vs <run-id>[/red]")
+            raise typer.Exit(code=2)
+        _judge_pairwise(
+            engine, client, run_id, run_b, criterion=criterion, model=settings.judge_model
+        )
+        return
+
+    project_cfg = _load_project_config()
+    judges_specs = [
+        spec for spec in project_cfg.evaluators if _is_judge_spec(spec)
+    ]
+    if not judges_specs:
+        console.print(
+            "[yellow]no judge-type evaluators in arena.config.yaml[/yellow]"
+        )
+        return
+
+    with session(engine) as s:
+        run = _find_run(s, run_id)
+        results = s.exec(select(CaseResult).where(CaseResult.run_id == run.id)).all()
+        if not results:
+            console.print(f"[red]run {run.id} has no persisted results[/red]")
+            raise typer.Exit(code=1)
+
+        scores_written = 0
+        for result in results:
+            case_row = s.get(Case, result.case_id)
+            if case_row is None:
+                continue
+            eval_case = _case_from_row(case_row)
+            for spec in judges_specs:
+                judge_obj = spec.build_judge(default_model=project_cfg.judge_model)
+                verdict = judge_obj.judge(eval_case, result.output, client=client)
+                s.add(
+                    JudgeScore(
+                        result_id=result.id,
+                        judge=spec.name or judge_obj.name,
+                        score=verdict.score,
+                        rationale=verdict.rationale,
+                        raw_json=None,
+                    )
+                )
+                scores_written += 1
+        s.commit()
+
+    console.print(
+        f"[green]✓[/green] wrote {scores_written} judge scores for run "
+        f"[bold]{run_id}[/bold]"
+    )
+
+
+def _is_judge_spec(spec: Any) -> bool:
+    from arena.project import JudgeSpec
+
+    return isinstance(spec, JudgeSpec)
+
+
+def _case_from_row(row: Any) -> Any:
+    from arena.evals.dataset import EvalCase
+
+    return EvalCase(
+        id=row.id,
+        inputs=row.inputs,
+        expected=row.expected,
+        tags=row.tags,
+        source=row.source,
+        trace_id=row.trace_id,
+    )
+
+
+def _judge_pairwise(
+    engine: Any,
+    client: Any,
+    run_a_id: str,
+    run_b_id: str,
+    *,
+    criterion: str,
+    model: str,
+) -> None:
+    from sqlmodel import select
+
+    from arena.evals.dataset import EvalCase
+    from arena.judges.pairwise import PairwiseJudge, PairwiseSummary
+    from arena.store import Case
+
+    judge = PairwiseJudge(criterion=criterion, model=model)
+    summary = PairwiseSummary()
+
+    with session(engine) as s:
+        run_a = _find_run(s, run_a_id)
+        run_b = _find_run(s, run_b_id)
+        results_a = {
+            r.case_id: r
+            for r in s.exec(select(CaseResult).where(CaseResult.run_id == run_a.id)).all()
+        }
+        results_b = {
+            r.case_id: r
+            for r in s.exec(select(CaseResult).where(CaseResult.run_id == run_b.id)).all()
+        }
+        shared = sorted(set(results_a) & set(results_b))
+        if not shared:
+            console.print("[red]no overlapping cases between the two runs[/red]")
+            raise typer.Exit(code=1)
+
+        table = Table("case", "verdict", "rationale", title="pairwise verdicts")
+        for case_id in shared:
+            case_row = s.get(Case, case_id)
+            if case_row is None:
+                continue
+            eval_case = EvalCase(
+                id=case_row.id,
+                inputs=case_row.inputs,
+                expected=case_row.expected,
+            )
+            result = judge.compare(
+                eval_case,
+                output_a=results_a[case_id].output,
+                output_b=results_b[case_id].output,
+                client=client,
+            )
+            summary.add(result)
+            table.add_row(case_id[:8], result.verdict, (result.rationale or "")[:60])
+        console.print(table)
+
+    console.print(
+        f"[bold]A win rate (ties = 0.5): {summary.win_rate_a:.3f}[/bold]  "
+        f"wins_a={summary.wins_a}  wins_b={summary.wins_b}  ties={summary.ties}"
+    )
 
 
 @app.command()
