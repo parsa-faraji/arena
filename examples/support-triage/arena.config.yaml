@@ -1,0 +1,29 @@
+# Arena project config — support ticket triage demo
+
+dataset: dataset.jsonl
+default_model: gpt-4o-mini
+judge_model: claude-haiku-4-5
+optimizer_model: claude-sonnet-4-6
+
+# Evaluators applied to every case result.
+evaluators:
+  - type: exact_match
+    field: urgency
+  - type: exact_match
+    field: category
+  - type: judge
+    judge: rubric:helpfulness
+    field: suggested_reply
+
+# Judge ensemble used for reply quality.
+judges:
+  - pairwise
+  - rubric:helpfulness
+  - rubric:tone
+
+# Fallback chain if the default model errors out.
+fallback_chain:
+  - model: gpt-4o-mini
+    fallbacks: [gpt-4o]
+  - model: claude-haiku-4-5
+    fallbacks: [claude-sonnet-4-6]

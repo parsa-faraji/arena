@@ -1,0 +1,20 @@
+{"id": "case-001", "inputs": {"ticket": "I was charged twice for my subscription this month. Please refund one of them ASAP."}, "expected": {"urgency": "high", "category": "billing"}}
+{"id": "case-002", "inputs": {"ticket": "Hey, it would be awesome if you added a dark mode to the dashboard. Thanks!"}, "expected": {"urgency": "low", "category": "feature"}}
+{"id": "case-003", "inputs": {"ticket": "The export CSV button just hangs forever on large reports. Chrome latest, 3k rows."}, "expected": {"urgency": "med", "category": "bug"}}
+{"id": "case-004", "inputs": {"ticket": "I can't log in. Keeps saying 'invalid credentials' but I reset my password twice."}, "expected": {"urgency": "high", "category": "account"}}
+{"id": "case-005", "inputs": {"ticket": "What's the difference between the Pro and Team plans?"}, "expected": {"urgency": "low", "category": "other"}}
+{"id": "case-006", "inputs": {"ticket": "URGENT — production integration is broken, your API is returning 500 on every call. We're losing customers."}, "expected": {"urgency": "high", "category": "bug"}}
+{"id": "case-007", "inputs": {"ticket": "Need to update my billing address before the next invoice goes out."}, "expected": {"urgency": "med", "category": "billing"}}
+{"id": "case-008", "inputs": {"ticket": "Please delete my account and all my data per GDPR."}, "expected": {"urgency": "med", "category": "account"}}
+{"id": "case-009", "inputs": {"ticket": "Can you add webhook support for the new events API? Would save us a bunch of polling."}, "expected": {"urgency": "low", "category": "feature"}}
+{"id": "case-010", "inputs": {"ticket": "Invoice #4421 has the wrong tax rate — should be 0% (reverse charge), charged 20%."}, "expected": {"urgency": "med", "category": "billing"}}
+{"id": "case-011", "inputs": {"ticket": "Typo in your onboarding email: 'recieve' should be 'receive'."}, "expected": {"urgency": "low", "category": "other"}}
+{"id": "case-012", "inputs": {"ticket": "The dashboard shows my team as 5 seats but I only have 3 users. Am I being overcharged?"}, "expected": {"urgency": "med", "category": "billing"}}
+{"id": "case-013", "inputs": {"ticket": "SSO with Okta stopped working after your deploy this morning. Whole company locked out."}, "expected": {"urgency": "high", "category": "bug"}}
+{"id": "case-014", "inputs": {"ticket": "How do I invite someone as a read-only member?"}, "expected": {"urgency": "low", "category": "other"}}
+{"id": "case-015", "inputs": {"ticket": "The search returns stale results — I created a project 10 minutes ago and it's still not indexed."}, "expected": {"urgency": "med", "category": "bug"}}
+{"id": "case-016", "inputs": {"ticket": "I'd like to downgrade to the free tier at the end of my billing cycle."}, "expected": {"urgency": "low", "category": "billing"}}
+{"id": "case-017", "inputs": {"ticket": "Your mobile app crashes on launch on iOS 18.3. Tried reinstalling, same thing."}, "expected": {"urgency": "high", "category": "bug"}}
+{"id": "case-018", "inputs": {"ticket": "Can I export my data as JSON instead of only CSV?"}, "expected": {"urgency": "low", "category": "feature"}}
+{"id": "case-019", "inputs": {"ticket": "I got an email saying 'suspicious login from Russia' — is this real or phishing?"}, "expected": {"urgency": "high", "category": "account"}}
+{"id": "case-020", "inputs": {"ticket": "The API docs for the /v2/runs endpoint are missing the 'status' field."}, "expected": {"urgency": "low", "category": "other"}}
