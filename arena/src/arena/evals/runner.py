@@ -29,6 +29,7 @@ from arena.evals.dataset import Dataset, EvalCase
 from arena.evals.evaluators import Evaluator, EvaluatorResult
 from arena.gateway.cache import SemanticCache
 from arena.gateway.client import GatewayClient, GatewayError, GatewayResponse
+from arena.gateway.pricing import cost_usd
 from arena.store import CaseResult, JudgeScore, Run, Variant, session
 from arena.tracing import span
 
@@ -60,6 +61,12 @@ class CaseOutcome:
     def passed(self) -> bool:
         return self.error is None and all(s.passed for s in self.scores)
 
+    @property
+    def cost_usd(self) -> float:
+        if self.cache_hit:
+            return 0.0
+        return cost_usd(self.model, self.input_tokens, self.output_tokens)
+
 
 @dataclass(slots=True)
 class RunSummary:
@@ -72,6 +79,7 @@ class RunSummary:
     total_input_tokens: int
     total_output_tokens: int
     cache_hits: int
+    total_cost_usd: float
     outcomes: list[CaseOutcome]
 
     @property
@@ -137,6 +145,7 @@ class VariantRunner:
             total_input_tokens=sum(o.input_tokens for o in outcomes),
             total_output_tokens=sum(o.output_tokens for o in outcomes),
             cache_hits=cache_hits,
+            total_cost_usd=sum(o.cost_usd for o in outcomes),
             outcomes=outcomes,
         )
 

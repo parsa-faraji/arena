@@ -232,6 +232,7 @@ def _print_summary(summary: RunSummary) -> None:
         "tokens",
         f"in={summary.total_input_tokens}  out={summary.total_output_tokens}",
     )
+    meta.add_row("cost", f"${summary.total_cost_usd:.4f}")
     console.print(meta)
     console.print(f"Run id: [bold]{summary.run_id}[/bold]")
 
