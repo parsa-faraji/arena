@@ -29,7 +29,7 @@ from arena.evals.dataset import Dataset, EvalCase
 from arena.evals.evaluators import Evaluator, EvaluatorResult
 from arena.gateway.cache import SemanticCache
 from arena.gateway.client import GatewayClient, GatewayError, GatewayResponse
-from arena.store import CaseResult, Run, Variant, session
+from arena.store import CaseResult, JudgeScore, Run, Variant, session
 from arena.tracing import span
 
 log = logging.getLogger(__name__)
@@ -90,8 +90,10 @@ class VariantRunner:
         cases = list(dataset.cases[: cfg.max_cases]) if cfg.max_cases else list(dataset)
 
         with session(self._engine) as s:
-            # Persist the variant if it doesn't already have an id.
-            if not cfg.variant.id or not s.get(Variant, cfg.variant.id):
+            # Persist the variant if it's not already in this DB. `id` is
+            # always populated (default_factory), so the DB lookup is the
+            # only meaningful check.
+            if s.get(Variant, cfg.variant.id) is None:
                 s.add(cfg.variant)
                 s.commit()
                 s.refresh(cfg.variant)
@@ -192,21 +194,35 @@ class VariantRunner:
         )
 
     def _persist_results(self, run_id: str, outcomes: list[CaseOutcome]) -> None:
+        import json as _json
+
         with session(self._engine) as s:
             for outcome in outcomes:
-                s.add(
-                    CaseResult(
-                        run_id=run_id,
-                        case_id=outcome.case.id,
-                        output=outcome.output,
-                        input_tokens=outcome.input_tokens,
-                        output_tokens=outcome.output_tokens,
-                        latency_ms=outcome.latency_ms,
-                        model=outcome.model,
-                        cache_hit=outcome.cache_hit,
-                        error=outcome.error,
-                    )
+                result = CaseResult(
+                    run_id=run_id,
+                    case_id=outcome.case.id,
+                    output=outcome.output,
+                    input_tokens=outcome.input_tokens,
+                    output_tokens=outcome.output_tokens,
+                    latency_ms=outcome.latency_ms,
+                    model=outcome.model,
+                    cache_hit=outcome.cache_hit,
+                    error=outcome.error,
                 )
+                s.add(result)
+                s.flush()  # populate result.id before adding dependent rows
+                for score in outcome.scores:
+                    s.add(
+                        JudgeScore(
+                            result_id=result.id,
+                            judge=score.name,
+                            score=score.score,
+                            rationale=None,
+                            raw_json=_json.dumps(score.details, default=str)
+                            if score.details
+                            else None,
+                        )
+                    )
             s.commit()
 
     def _finalise_run(
