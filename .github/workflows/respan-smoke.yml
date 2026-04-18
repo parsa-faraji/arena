@@ -1,0 +1,25 @@
+name: respan-smoke
+
+# End-to-end smoke test against the real Respan gateway. Runs only on main
+# and only when the RESPAN_API_KEY secret is set, so forks don't burn quota.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    if: ${{ secrets.RESPAN_API_KEY != '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -e './arena[dev]'
+      - name: Hello-world Respan call
+        env:
+          RESPAN_API_KEY: ${{ secrets.RESPAN_API_KEY }}
+        run: arena run smoke --hello-world

@@ -1,0 +1,32 @@
+name: arena-gate
+
+# Runs Arena's regression gate on every PR that touches prompts or datasets.
+# Wires in once `arena gate` lands in Week 2; the workflow is here from Day 1
+# so the CI story is already green in the README demo.
+
+on:
+  pull_request:
+    paths:
+      - "examples/**/prompts/**"
+      - "examples/**/dataset.jsonl"
+      - "arena/src/arena/**"
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    if: ${{ secrets.RESPAN_API_KEY != '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -e './arena[dev]'
+      - name: Regression gate
+        env:
+          RESPAN_API_KEY: ${{ secrets.RESPAN_API_KEY }}
+          RESPAN_ORG_ID: ${{ secrets.RESPAN_ORG_ID }}
+        working-directory: examples/support-triage
+        run: |
+          arena run v0 --cases 50
+          arena gate --baseline "${{ vars.ARENA_BASELINE_RUN_ID }}"
