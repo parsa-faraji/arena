@@ -20,6 +20,7 @@ import hashlib
 import json
 import logging
 import threading
+from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -58,12 +59,16 @@ class SemanticCache:
         path: Path | None = None,
         semantic_threshold: float = 0.92,
         enable_semantic: bool = True,
+        max_entries: int = 10_000,
     ) -> None:
-        self._exact: dict[str, CacheEntry] = {}
+        if max_entries <= 0:
+            raise ValueError("max_entries must be positive")
+        self._exact: OrderedDict[str, CacheEntry] = OrderedDict()
         self._semantic_threshold = semantic_threshold
         self._enable_semantic = enable_semantic
         self._lock = threading.RLock()
         self._path = path
+        self._max_entries = max_entries
 
         self._embedder: Any | None = None
         self._index: Any | None = None
@@ -81,6 +86,8 @@ class SemanticCache:
         with self._lock:
             entry = self._exact.get(exact)
             if entry is not None:
+                # Refresh LRU recency so hot entries survive eviction.
+                self._exact.move_to_end(exact)
                 return entry.response
 
         if not self._enable_semantic or temperature > 0.0:
@@ -104,7 +111,11 @@ class SemanticCache:
         signature = _signature(messages, model, temperature)
         entry = CacheEntry(response=response, signature=signature)
         with self._lock:
+            if exact in self._exact:
+                self._exact.move_to_end(exact)
             self._exact[exact] = entry
+            while len(self._exact) > self._max_entries:
+                self._exact.popitem(last=False)
             if self._enable_semantic and temperature == 0.0:
                 self._semantic_put(_last_user_text(messages), entry)
 
