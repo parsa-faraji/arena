@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.tox/
+dist/
+build/
+.venv/
+venv/
+*.egg
+
+# uv
+.uv/
+
+# Node
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+.turbo/
+
+# Env / secrets
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# Arena runtime data
+arena.db
+arena.db-*
+*.sqlite
+*.sqlite-journal
+.arena/
+runs/
+
+# Vector caches
+.faiss/
+*.faiss
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
