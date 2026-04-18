@@ -21,8 +21,9 @@ from arena.evals import (
 )
 from arena.gateway import GatewayClient
 from arena.gateway.cache import SemanticCache
+from arena.gateway.pricing import cost_usd
 from arena.project import ProjectConfig, ProjectConfigError
-from arena.store import Variant, create_engine, init_db
+from arena.store import CaseResult, JudgeScore, Run, Variant, create_engine, init_db, session
 from arena.tracing import init_tracing, span
 
 app = typer.Typer(
@@ -235,6 +236,148 @@ def _print_summary(summary: RunSummary) -> None:
 
 
 # ---------------------------------------------------------------- placeholders
+
+# ---------------------------------------------------------------- runs / show
+
+
+@app.command("runs")
+def runs(limit: int = typer.Option(20, "--limit", help="How many runs to list.")) -> None:
+    """List recent runs (most recent first)."""
+    from sqlmodel import desc, select
+
+    settings = _settings()
+    engine = _engine(settings)
+
+    table = Table(
+        "run id",
+        "variant",
+        "dataset",
+        "cases",
+        "status",
+        "cost",
+        "started",
+        title="recent runs",
+    )
+    with session(engine) as s:
+        rows = s.exec(select(Run).order_by(desc(Run.started_at)).limit(limit)).all()
+        for run in rows:
+            variant = s.get(Variant, run.variant_id)
+            cost = _run_cost_usd(s, run.id)
+            table.add_row(
+                run.id[:8],
+                variant.name if variant else "?",
+                run.dataset,
+                f"{run.completed_cases}/{run.total_cases}",
+                _colour_status(run.status),
+                f"${cost:.4f}",
+                run.started_at.strftime("%Y-%m-%d %H:%M"),
+            )
+
+    console.print(table)
+
+
+@app.command()
+def show(run_id: str = typer.Argument(..., help="Run id (full or 8-char prefix).")) -> None:
+    """Show the full detail of a single run — scores, costs, per-case results."""
+    from sqlmodel import select
+
+    settings = _settings()
+    engine = _engine(settings)
+
+    with session(engine) as s:
+        run = _find_run(s, run_id)
+        variant = s.get(Variant, run.variant_id)
+        results = s.exec(
+            select(CaseResult).where(CaseResult.run_id == run.id)
+        ).all()
+        result_ids = [r.id for r in results]
+        scores = (
+            s.exec(
+                select(JudgeScore).where(JudgeScore.result_id.in_(result_ids))  # type: ignore[attr-defined]
+            ).all()
+            if result_ids
+            else []
+        )
+
+    header = Table.grid(padding=(0, 2))
+    header.add_row("run id", run.id)
+    header.add_row("variant", variant.name if variant else "?")
+    header.add_row("dataset", run.dataset)
+    header.add_row("status", _colour_status(run.status))
+    header.add_row("cases", f"{run.completed_cases}/{run.total_cases}")
+    header.add_row(
+        "tokens",
+        f"in={sum(r.input_tokens for r in results)}  out={sum(r.output_tokens for r in results)}",
+    )
+    total_cost = sum(
+        cost_usd(r.model, r.input_tokens, r.output_tokens)
+        for r in results
+        if not r.cache_hit
+    )
+    header.add_row("cost", f"${total_cost:.4f}")
+    console.print(header)
+
+    if scores:
+        agg: dict[str, list[float]] = {}
+        for score in scores:
+            agg.setdefault(score.judge, []).append(score.score)
+        scores_table = Table("evaluator", "mean score", title="scores")
+        for name, values in sorted(agg.items()):
+            mean = sum(values) / len(values) if values else 0.0
+            colour = "green" if mean >= 0.8 else "yellow" if mean >= 0.5 else "red"
+            scores_table.add_row(name, f"[{colour}]{mean:.3f}[/{colour}]")
+        console.print(scores_table)
+
+    cases_table = Table("case", "model", "tokens", "latency", "cached", title="cases")
+    for r in results[:50]:
+        cases_table.add_row(
+            r.case_id[:8],
+            r.model,
+            f"{r.input_tokens}+{r.output_tokens}",
+            f"{r.latency_ms}ms",
+            "yes" if r.cache_hit else "",
+        )
+    if len(results) > 50:
+        cases_table.caption = f"(showing 50 of {len(results)})"
+    console.print(cases_table)
+
+
+def _find_run(s: Any, run_id: str) -> Run:
+    from sqlmodel import select
+
+    run = s.get(Run, run_id)
+    if run is not None:
+        return run
+    # prefix lookup
+    candidates = s.exec(select(Run).where(Run.id.like(f"{run_id}%"))).all()  # type: ignore[attr-defined]
+    if len(candidates) == 1:
+        return candidates[0]
+    if not candidates:
+        console.print(f"[red]no run matching {run_id!r}[/red]")
+        raise typer.Exit(code=1)
+    console.print(
+        f"[red]ambiguous run id {run_id!r} — {len(candidates)} matches[/red]"
+    )
+    raise typer.Exit(code=1)
+
+
+def _run_cost_usd(s: Any, run_id: str) -> float:
+    from sqlmodel import select
+
+    rows = s.exec(select(CaseResult).where(CaseResult.run_id == run_id)).all()
+    return sum(
+        cost_usd(r.model, r.input_tokens, r.output_tokens) for r in rows if not r.cache_hit
+    )
+
+
+def _colour_status(status: str) -> str:
+    palette = {"done": "green", "error": "red", "running": "yellow", "pending": "dim"}
+    colour = palette.get(status, "white")
+    return f"[{colour}]{status}[/{colour}]"
+
+
+# ---------------------------------------------------------------- placeholders
+
 
 @app.command()
 def judge(run_id: str = typer.Argument(...)) -> None:
