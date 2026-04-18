@@ -20,7 +20,7 @@ def test_init_scaffolds(tmp_path: Path) -> None:
     result = runner.invoke(app, ["init", str(target)])
     assert result.exit_code == 0, result.stdout
     assert (target / "arena.config.yaml").exists()
-    assert (target / "prompts" / "v0-baseline.md").exists()
+    assert (target / "prompts" / "v0.md").exists()
     assert (target / "dataset.jsonl").exists()
     assert (target / ".env").exists()
 
