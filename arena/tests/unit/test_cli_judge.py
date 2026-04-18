@@ -38,17 +38,26 @@ def _seed_run(db_path: Path, run_name: str = "v0") -> tuple[str, str]:
     init_db(engine)
     with session(engine) as s:
         v = Variant(name=run_name, prompt="p", model="gpt-4o-mini")
-        s.add(v); s.commit(); s.refresh(v)
+        s.add(v)
+        s.commit()
+        s.refresh(v)
         c = Case(id="case-1", dataset="demo", inputs_json='{"ticket": "refund please"}')
-        s.add(c); s.commit()
-        run = Run(variant_id=v.id, dataset="demo", status="done", total_cases=1, completed_cases=1)
-        s.add(run); s.commit(); s.refresh(run)
+        s.add(c)
+        s.commit()
+        run = Run(
+            variant_id=v.id, dataset="demo", status="done",
+            total_cases=1, completed_cases=1,
+        )
+        s.add(run)
+        s.commit()
+        s.refresh(run)
         result = CaseResult(
             run_id=run.id, case_id="case-1",
             output='{"urgency": "high", "suggested_reply": "I\'ll refund"}',
             input_tokens=10, output_tokens=5, latency_ms=1, model="gpt-4o-mini",
         )
-        s.add(result); s.commit()
+        s.add(result)
+        s.commit()
     return run.id, v.id
 
 
@@ -91,13 +100,22 @@ def test_judge_pairwise_reports_win_rate(tmp_path: Path, monkeypatch) -> None:
     engine = create_engine(f"sqlite:///{db}")
     with session(engine) as s:
         v = Variant(name="v1", prompt="p2", model="gpt-4o-mini")
-        s.add(v); s.commit(); s.refresh(v)
-        run_b = Run(variant_id=v.id, dataset="demo", status="done", total_cases=1, completed_cases=1)
-        s.add(run_b); s.commit(); s.refresh(run_b)
-        s.add(CaseResult(
-            run_id=run_b.id, case_id="case-1", output='{"urgency": "high"}',
-            input_tokens=10, output_tokens=5, latency_ms=1, model="gpt-4o-mini",
-        ))
+        s.add(v)
+        s.commit()
+        s.refresh(v)
+        run_b = Run(
+            variant_id=v.id, dataset="demo", status="done",
+            total_cases=1, completed_cases=1,
+        )
+        s.add(run_b)
+        s.commit()
+        s.refresh(run_b)
+        s.add(
+            CaseResult(
+                run_id=run_b.id, case_id="case-1", output='{"urgency": "high"}',
+                input_tokens=10, output_tokens=5, latency_ms=1, model="gpt-4o-mini",
+            )
+        )
         s.commit()
         run_b_id = run_b.id
 

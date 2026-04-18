@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import logging
 import sys
+from datetime import UTC
 from pathlib import Path
 from typing import Any
 
@@ -566,12 +567,117 @@ def optimize(
 
 @app.command()
 def mine(
-    from_respan: bool = typer.Option(False, "--from-respan"),
-    last: str = typer.Option("24h", "--last"),
+    from_respan: bool = typer.Option(
+        False, "--from-respan", help="Pull from a live Respan workspace."
+    ),
+    fixture: Path = typer.Option(
+        None, "--fixture", help="Load traces from a local JSONL fixture instead.",
+    ),
+    last: str = typer.Option("24h", "--last", help="Lookback window (e.g. 30m, 24h, 7d)."),
+    limit: int = typer.Option(500, "--limit", help="Max traces to pull."),
+    min_cluster: int = typer.Option(3, "--min-cluster", help="Min traces per cluster."),
+    only_failures: bool = typer.Option(
+        True, "--only-failures/--all", help="Only mine error/flagged traces."
+    ),
+    output: Path = typer.Option(
+        Path("mined.jsonl"), "--output", help="Where to write the eval cases."
+    ),
+    no_label: bool = typer.Option(
+        False, "--no-label", help="Skip LLM cluster labelling (offline mode).",
+    ),
 ) -> None:
-    """Pull + cluster Respan traces into eval cases. (Week-1 stub.)"""
+    """Mine Respan traces into an eval dataset.
+
+    Two modes:
+      arena mine --from-respan --last 24h           — live workspace pull.
+      arena mine --fixture examples/.../traces.jsonl — offline demo mode.
+    """
+    from datetime import datetime
+
+    from arena.mine import (
+        FixtureSource,
+        MiningReport,
+        RespanAPI,
+        mine_to_eval_cases,
+        parse_relative_duration,
+    )
+
+    if not from_respan and fixture is None:
+        console.print("[red]pass --from-respan or --fixture <path>[/red]")
+        raise typer.Exit(code=2)
+    if from_respan and fixture is not None:
+        console.print("[red]--from-respan and --fixture are mutually exclusive[/red]")
+        raise typer.Exit(code=2)
+
+    settings = _settings()
+
+    if from_respan:
+        _require_respan(settings)
+        try:
+            datetime.now(tz=UTC) - parse_relative_duration(last)
+        except ValueError as exc:
+            console.print(f"[red]invalid --last: {exc}[/red]")
+            raise typer.Exit(code=2) from exc
+        # Respan traces use a non-gateway base URL in most deployments; the
+        # env knob lets the user override to their workspace host.
+        source = RespanAPI(
+            api_key=settings.respan_api_key_value(),
+            base_url=settings.respan_base_url.replace("/api", ""),
+        )
+        init_tracing(api_key=settings.respan_api_key_value(), app_name="arena")
+        label_client = GatewayClient(
+            api_key=settings.respan_api_key_value(),
+            base_url=settings.respan_base_url,
+            default_model=settings.default_model,
+        ) if not no_label else None
+    else:
+        source = FixtureSource(fixture)  # type: ignore[arg-type]
+        label_client = (
+            GatewayClient(
+                api_key=settings.respan_api_key_value(),
+                base_url=settings.respan_base_url,
+                default_model=settings.default_model,
+            )
+            if not no_label and settings.has_respan_credentials
+            else None
+        )
+
+    with span("arena.mine"):
+        report: MiningReport = mine_to_eval_cases(
+            source,
+            client=label_client,
+            min_cluster_size=min_cluster,
+            max_traces=limit,
+            only_failures=only_failures,
+            label_clusters=not no_label,
+        )
+
+    # Write eval cases to output JSONL — this is what `arena run --dataset` consumes.
+    with output.open("w") as fh:
+        for case in report.cases:
+            fh.write(
+                json.dumps(
+                    {
+                        "id": case.id,
+                        "inputs": case.inputs,
+                        "expected": case.expected,
+                        "tags": case.tags,
+                        "source": case.source,
+                        "trace_id": case.trace_id,
+                    }
+                )
+                + "\n"
+            )
+
+    # Print a per-cluster summary so the user can eyeball the mine.
+    table = Table("cluster", "label", "size", title="mined clusters")
+    for cluster in report.clusters:
+        table.add_row(str(cluster.id), cluster.label or "(no label)", str(cluster.size))
+    console.print(table)
     console.print(
-        f"[yellow]TODO[/yellow] mine from_respan={from_respan} last={last} - Week 1 Day 6-7."
+        f"[green]✓[/green] {report.total_traces} traces → "
+        f"{len(report.clusters)} clusters → {len(report.cases)} cases "
+        f"written to [bold]{output}[/bold]"
     )
 
 
