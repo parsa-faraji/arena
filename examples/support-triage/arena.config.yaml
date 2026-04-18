@@ -5,21 +5,41 @@ default_model: gpt-4o-mini
 judge_model: claude-haiku-4-5
 optimizer_model: claude-sonnet-4-6
 
-# Evaluators applied to every case result.
+# Evaluators applied to every case result. The runner scores each result
+# against all three so a single run gives us exact-match accuracy (cheap,
+# deterministic) AND a judge verdict on reply quality (LLM-based, slower).
 evaluators:
   - type: exact_match
     field: urgency
+
   - type: exact_match
     field: category
-  - type: judge
-    judge: rubric:helpfulness
-    field: suggested_reply
 
-# Judge ensemble used for reply quality.
-judges:
-  - pairwise
-  - rubric:helpfulness
-  - rubric:tone
+  - type: json_parse
+    fields: [urgency, category, suggested_reply]
+
+  - type: judge
+    judge: rubric
+    name: helpfulness
+    criterion: >
+      Does the suggested reply directly acknowledge the customer's issue,
+      set clear expectations, and offer a next step?
+    target_field: suggested_reply
+
+  - type: judge
+    judge: ensemble
+    name: reply_quality
+    judges:
+      - type: judge
+        judge: rubric
+        name: clarity
+        criterion: Is the reply clear and free of jargon?
+        target_field: suggested_reply
+      - type: judge
+        judge: rubric
+        name: tone
+        criterion: Does the reply sound like a real person, not a corporate script?
+        target_field: suggested_reply
 
 # Fallback chain if the default model errors out.
 fallback_chain:
