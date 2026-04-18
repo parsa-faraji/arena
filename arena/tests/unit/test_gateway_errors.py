@@ -40,7 +40,7 @@ def _client_with(handler: Any) -> GatewayClient:
 
 def test_connection_error_wrapped() -> None:
     client = _client_with(_always_fails)
-    with pytest.raises(GatewayError, match="request failed|unreachable|timed out"):
+    with pytest.raises(GatewayError, match=r"request failed|unreachable|timed out"):
         client.chat([{"role": "user", "content": "hi"}])
 
 

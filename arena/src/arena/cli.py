@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import Any
 
 import typer
-import yaml
 from rich.console import Console
 from rich.table import Table
 
@@ -20,9 +19,9 @@ from arena.evals import (
     RunSummary,
     VariantRunner,
 )
-from arena.evals.runner import _default_evaluators_from_config
 from arena.gateway import GatewayClient
 from arena.gateway.cache import SemanticCache
+from arena.project import ProjectConfig, ProjectConfigError
 from arena.store import Variant, create_engine, init_db
 from arena.tracing import init_tracing, span
 
@@ -55,15 +54,13 @@ def _require_respan(settings: Settings) -> None:
         raise typer.Exit(code=2)
 
 
-def _load_project_config(path: Path = Path("arena.config.yaml")) -> dict[str, Any]:
-    """Best-effort load of arena.config.yaml. Returns {} if missing."""
-    if not path.exists():
-        return {}
-    with path.open() as fh:
-        data = yaml.safe_load(fh) or {}
-    if not isinstance(data, dict):
-        raise typer.BadParameter(f"{path} must be a YAML mapping, got {type(data).__name__}")
-    return data
+def _load_project_config(path: Path = Path("arena.config.yaml")) -> ProjectConfig:
+    """Load and validate `arena.config.yaml`. Returns defaults if missing."""
+    try:
+        return ProjectConfig.from_yaml(path)
+    except ProjectConfigError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1) from exc
 
 
 @app.callback()
@@ -185,14 +182,14 @@ def run(
 
     project_cfg = _load_project_config()
     ds = Dataset.from_jsonl(dataset)
-    evaluators = _default_evaluators_from_config(project_cfg)
+    evaluators = project_cfg.to_evaluators()
     if not evaluators:
         console.print(
             "[yellow]warning[/yellow] no evaluators configured in arena.config.yaml; "
             "run will record outputs but skip scoring."
         )
 
-    model = project_cfg.get("default_model", settings.default_model)
+    model = project_cfg.default_model or settings.default_model
     variant_row = Variant(
         name=variant,
         prompt=prompt_path.read_text(),

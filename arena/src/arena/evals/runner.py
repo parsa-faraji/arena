@@ -21,7 +21,6 @@ import logging
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
-from typing import Any
 
 from sqlalchemy import Engine
 
@@ -258,26 +257,3 @@ def _aggregate_scores(
     return {name: (sum(v) / len(v) if v else 0.0) for name, v in agg.items()}
 
 
-def _default_evaluators_from_config(cfg: dict[str, Any]) -> list[Evaluator]:
-    """Build the evaluator list from a parsed arena.config.yaml section."""
-    from arena.evals.evaluators import (
-        ExactMatchEvaluator,
-        JSONParseEvaluator,
-        RegexEvaluator,
-    )
-
-    out: list[Evaluator] = []
-    for spec in cfg.get("evaluators", []) or []:
-        kind = spec.get("type")
-        if kind == "exact_match":
-            out.append(ExactMatchEvaluator(field=spec["field"]))
-        elif kind == "json_parse":
-            out.append(JSONParseEvaluator(required_fields=tuple(spec["fields"])))
-        elif kind == "regex":
-            out.append(RegexEvaluator(pattern=spec["pattern"]))
-        elif kind == "judge":
-            # Added in Week 1 Day 5 — skipped for now with a clear log.
-            log.info("skipping judge evaluator %s (wired in Day 5)", spec)
-        else:
-            log.warning("unknown evaluator type: %s", kind)
-    return out
