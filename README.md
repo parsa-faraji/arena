@@ -12,6 +12,17 @@ Arena closes the loop between Respan's production observability and your prompt 
 
 Every LLM call is logged to your Respan workspace, so the entire experiment graph (variants → judges → optimizer steps) shows up as a single trace tree in the Respan UI.
 
+## Dashboard
+
+A read-only Next.js dashboard ships under `arena-web/`. It reads the same
+`arena.db` the CLI writes to — no sync, no API layer.
+
+![Arena runs list](./docs/screenshots/01-runs-list.png)
+
+![Run detail with scores](./docs/screenshots/02-run-detail.png)
+
+![Pairwise compare](./docs/screenshots/03-compare.png)
+
 ## Why this exists
 
 Respan's pitch is *proactive* observability — catch problems before they hit production. Arena is the opinionated "after you've caught it, now what?" layer: a mechanical loop from *failure observed in Respan* → *regression test* → *optimized prompt* → *PR gate that prevents recurrence*. The loop is not magic; it's just four well-tested pieces glued together cleanly.

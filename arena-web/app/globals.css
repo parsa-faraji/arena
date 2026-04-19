@@ -1,0 +1,34 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html, body {
+    @apply bg-ink-900 text-ink-100 antialiased;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+      Oxygen, Ubuntu, sans-serif;
+  }
+  code, .mono {
+    @apply font-mono;
+  }
+  a {
+    @apply text-accent hover:text-accent-strong transition-colors;
+  }
+  h1, h2, h3 {
+    @apply text-ink-50 font-semibold tracking-tight;
+  }
+}
+
+@layer components {
+  .card {
+    @apply bg-ink-800 border border-ink-700 rounded-lg;
+  }
+  .chip {
+    @apply inline-flex items-center px-2 py-0.5 rounded-md text-xs font-mono border;
+  }
+  .chip-good { @apply border-good/40 text-good bg-good/5; }
+  .chip-warn { @apply border-warn/40 text-warn bg-warn/5; }
+  .chip-bad  { @apply border-bad/40 text-bad bg-bad/5; }
+  .chip-mute { @apply border-ink-600 text-ink-300 bg-ink-800; }
+  .table-cell-pad { @apply px-4 py-2.5; }
+}

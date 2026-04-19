@@ -11,6 +11,9 @@ build/
 .venv/
 venv/
 *.egg
+.coverage
+coverage.xml
+htmlcov/
 
 # uv
 .uv/

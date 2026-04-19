@@ -16,7 +16,6 @@ from arena.evals.evaluators import parse_json_output
 from arena.gateway.client import GatewayClient
 from arena.judges.base import JUDGE_SYSTEM_PROMPT, JudgeVerdict
 
-
 _BUCKETS = {
     "yes": 1.0,
     "partial": 0.5,
