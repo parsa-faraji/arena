@@ -8,7 +8,8 @@
     "build": "next build",
     "start": "next start --port 3000",
     "lint": "next lint",
-    "screenshots": "tsx scripts/screenshots.ts"
+    "screenshots": "tsx scripts/screenshots.ts",
+    "audit": "tsx scripts/audit.ts"
   },
   "dependencies": {
     "better-sqlite3": "^11.8.1",

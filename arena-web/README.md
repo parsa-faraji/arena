@@ -28,6 +28,20 @@ npm run screenshots
 
 Writes to `../docs/screenshots/`.
 
+## Audit
+
+The audit script boots Playwright against a running server and navigates
+every route, asserting expected content and flagging console errors,
+page exceptions, and network failures. Exits non-zero on any critical
+finding so it can run in CI.
+
+```bash
+# terminal 1
+ARENA_DB=../arena.db npm run start
+# terminal 2
+npm run audit
+```
+
 ## Stack
 
 - Next.js 16 App Router + React 19, TypeScript strict.
