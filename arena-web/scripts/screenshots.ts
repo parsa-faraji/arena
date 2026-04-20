@@ -36,19 +36,39 @@ async function main() {
     process.exit(1);
   }
 
-  // Read two run ids so we can build real URLs.
+  // Prefer the headline story (v0-baseline vs v1-optimized) when those
+  // variants exist; otherwise fall back to the two most recent runs.
   const db = new Database(DB_PATH, { readonly: true });
-  const runs = db
-    .prepare("SELECT r.id, v.name FROM run r JOIN variant v ON v.id = r.variant_id ORDER BY r.started_at DESC LIMIT 2")
-    .all() as { id: string; name: string }[];
-  db.close();
+  const pickNamed = (name: string) =>
+    db
+      .prepare(
+        "SELECT r.id, v.name FROM run r JOIN variant v ON v.id = r.variant_id " +
+          "WHERE v.name = ? ORDER BY r.started_at DESC LIMIT 1"
+      )
+      .get(name) as { id: string; name: string } | undefined;
 
-  if (runs.length < 2) {
-    console.error(`[screenshots] need at least 2 runs, found ${runs.length}`);
-    process.exit(1);
+  const headliner = pickNamed("v1-optimized");
+  const baseline = pickNamed("v0-baseline");
+
+  let latest: { id: string; name: string };
+  let previous: { id: string; name: string };
+  if (headliner && baseline) {
+    latest = headliner;
+    previous = baseline;
+  } else {
+    const recent = db
+      .prepare(
+        "SELECT r.id, v.name FROM run r JOIN variant v ON v.id = r.variant_id " +
+          "ORDER BY r.started_at DESC LIMIT 2"
+      )
+      .all() as { id: string; name: string }[];
+    if (recent.length < 2) {
+      console.error(`[screenshots] need at least 2 runs, found ${recent.length}`);
+      process.exit(1);
+    }
+    [latest, previous] = recent;
   }
-
-  const [latest, previous] = runs;
+  db.close();
   console.log(`[screenshots] using runs:`);
   console.log(`  latest:   ${latest.id.slice(0, 10)}  (${latest.name})`);
   console.log(`  previous: ${previous.id.slice(0, 10)}  (${previous.name})`);
