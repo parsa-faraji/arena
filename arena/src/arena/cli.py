@@ -555,14 +555,123 @@ def _judge_pairwise(
 
 @app.command()
 def optimize(
-    variant: str = typer.Argument(...),
-    budget: int = typer.Option(30, "--budget"),
-    target: str = typer.Option("reply_quality", "--target"),
+    variant: str = typer.Argument(..., help="Starting variant (matches prompts/<name>.md)."),
+    budget: int = typer.Option(10, "--budget", help="Max proposal steps."),
+    target: str = typer.Option(
+        "reply_quality", "--target", help="Evaluator name to optimize against."
+    ),
+    cases: int = typer.Option(20, "--cases", help="Cases per run."),
+    concurrency: int = typer.Option(4, "--concurrency"),
+    dataset: Path = typer.Option(_DEFAULT_DATASET, "--dataset"),
+    output: Path = typer.Option(
+        None,
+        "--output",
+        help="Where to write the winning prompt (default: prompts/<variant>-optimized.md).",
+    ),
 ) -> None:
-    """Auto-propose prompt variants. (Week-2 stub.)"""
-    console.print(
-        f"[yellow]TODO[/yellow] optimize {variant} budget={budget} target={target} - Week 2 Day 8."
+    """Auto-propose prompt variants via textual gradients.
+
+    Starts from the baseline prompt, runs it, picks the worst cases on the
+    target evaluator, asks the optimizer model for a revised prompt, runs
+    the revision, keeps it if it scores higher, and repeats until the
+    budget is spent. The best prompt is written back to disk so it can be
+    re-run with ``arena run``.
+    """
+    from arena.optimizer import OptimizerConfig
+    from arena.optimizer import optimize as run_optimizer
+
+    settings = _settings()
+    _require_respan(settings)
+    init_tracing(api_key=settings.respan_api_key_value(), app_name="arena")
+
+    prompt_path = Path("prompts") / f"{variant}.md"
+    if not prompt_path.exists():
+        console.print(f"[red]Missing prompt file: {prompt_path}[/red]")
+        raise typer.Exit(code=1)
+    if not dataset.exists():
+        console.print(f"[red]Missing dataset: {dataset}[/red]")
+        raise typer.Exit(code=1)
+
+    client = GatewayClient(
+        api_key=settings.respan_api_key_value(),
+        base_url=settings.respan_base_url,
+        default_model=settings.default_model,
+        disable_log=settings.disable_log,
     )
+    project_cfg = _load_project_config()
+    ds = Dataset.from_jsonl(dataset)
+    evaluators = project_cfg.to_evaluators(client=client)
+    if not any(e.name == target for e in evaluators):
+        available = ", ".join(e.name for e in evaluators) or "(none)"
+        console.print(
+            f"[red]target evaluator {target!r} not found. Available: {available}[/red]"
+        )
+        raise typer.Exit(code=2)
+
+    parent = Variant(
+        name=variant,
+        prompt=prompt_path.read_text(),
+        model=project_cfg.default_model or settings.default_model,
+    )
+    engine = _engine(settings)
+    optimizer_model = project_cfg.optimizer_model or settings.optimizer_model
+
+    with span("arena.optimize", variant=variant, budget=budget, target=target):
+        report = run_optimizer(
+            OptimizerConfig(
+                parent_variant=parent,
+                dataset=ds,
+                target_evaluator=target,
+                evaluators=evaluators,
+                budget=budget,
+                max_cases=cases,
+                concurrency=concurrency,
+                optimizer_model=optimizer_model,
+            ),
+            client=client,
+            engine=engine,
+        )
+
+    _print_optimizer_report(report)
+
+    # Write the winning prompt back so ``arena run`` can pick it up next.
+    output_path = output or (Path("prompts") / f"{variant}-optimized.md")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(report.best_variant.prompt)
+    console.print(
+        f"[green]✓[/green] wrote best prompt to [bold]{output_path}[/bold]"
+    )
+
+
+def _print_optimizer_report(report: Any) -> None:
+    steps_table = Table(
+        "step",
+        "kept",
+        "score before",
+        "score after",
+        "Δ",
+        "gradient",
+        title="optimizer steps",
+    )
+    for step in report.steps:
+        delta = step.score_after - step.score_before
+        colour = "green" if step.kept else "dim"
+        steps_table.add_row(
+            str(step.step),
+            f"[{colour}]{'yes' if step.kept else 'no'}[/{colour}]",
+            f"{step.score_before:.3f}",
+            f"{step.score_after:.3f}",
+            f"{delta:+.3f}",
+            (step.gradient or "")[:60],
+        )
+    console.print(steps_table)
+
+    summary = Table.grid(padding=(0, 2))
+    summary.add_row("parent score", f"{report.parent_score:.3f}")
+    summary.add_row("best score", f"[bold]{report.best_score:.3f}[/bold]")
+    summary.add_row("best run id", report.best_run_id)
+    summary.add_row("promoted", "yes" if report.promoted else "no")
+    console.print(summary)
 
 
 @app.command()
@@ -682,9 +791,85 @@ def mine(
 
 
 @app.command()
-def gate(baseline: str = typer.Option(..., "--baseline")) -> None:
-    """CI regression gate — exit 1 if current run regresses. (Week-2 stub.)"""
-    console.print(f"[yellow]TODO[/yellow] gate vs baseline={baseline} - Week 2 Day 10.")
+def gate(
+    baseline: str = typer.Option(
+        ..., "--baseline", help="Baseline run id (full or 8-char prefix)."
+    ),
+    run_id: str = typer.Option(
+        None,
+        "--run",
+        help="Candidate run id. Defaults to the most recent completed run.",
+    ),
+    threshold: float = typer.Option(
+        None,
+        "--threshold",
+        help="Max allowed per-judge drop (0..1). Default 0.02.",
+    ),
+) -> None:
+    """CI regression gate — exit 1 if the candidate run regresses vs a baseline."""
+    from sqlmodel import desc, select
+
+    from arena.gate import DEFAULT_THRESHOLD, evaluate
+
+    settings = _settings()
+    engine = _engine(settings)
+
+    with session(engine) as s:
+        baseline_run = _find_run(s, baseline)
+        if run_id is None:
+            latest = s.exec(
+                select(Run).order_by(desc(Run.started_at)).limit(1)
+            ).first()
+            if latest is None:
+                console.print("[red]no runs in DB to gate against[/red]")
+                raise typer.Exit(code=1)
+            candidate_run = latest
+        else:
+            candidate_run = _find_run(s, run_id)
+
+    report = evaluate(
+        engine=engine,
+        baseline_run_id=baseline_run.id,
+        candidate_run_id=candidate_run.id,
+        threshold=threshold if threshold is not None else DEFAULT_THRESHOLD,
+    )
+    _print_gate_report(report)
+    if not report.passed:
+        raise typer.Exit(code=1)
+
+
+def _print_gate_report(report: Any) -> None:
+    table = Table(
+        "judge",
+        "baseline",
+        "candidate",
+        "Δ",
+        "status",
+        title=f"gate — {report.candidate_run_id[:8]} vs {report.baseline_run_id[:8]}",
+    )
+    for delta in report.deltas:
+        candidate = "missing" if delta.candidate is None else f"{delta.candidate:.3f}"
+        tone = "red" if delta.regressed else "green"
+        table.add_row(
+            delta.judge,
+            f"{delta.baseline:.3f}",
+            candidate,
+            f"[{tone}]{delta.delta:+.3f}[/{tone}]",
+            f"[{tone}]{'REGRESS' if delta.regressed else 'ok'}[/{tone}]",
+        )
+    console.print(table)
+    for note in report.notes:
+        console.print(f"[yellow]note[/yellow] {note}")
+
+    verdict = (
+        "[green bold]PASS[/green bold]"
+        if report.passed
+        else "[red bold]FAIL[/red bold]"
+    )
+    console.print(
+        f"{verdict} threshold={report.threshold:.3f} "
+        f"regressions={len(report.regressed_judges)}"
+    )
 
 
 def main() -> None:  # pragma: no cover
